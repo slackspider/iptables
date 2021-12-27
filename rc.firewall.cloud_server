@@ -1,0 +1,124 @@
+#!/bin/bash
+
+###
+### VERY Simple Firewall Script for cloud servers. Blocks all ports and opens only what's necessary
+### Carlos Aranha, @slackspider
+### June 27th, 2017
+###
+
+
+################################################ Variables SETUP
+
+WAN1='eth0'
+WAN2='eth0:1'
+
+IP1='1.2.3.4'
+IP2='1.2.3.5'
+
+
+################################################ Policies and basic iptables setup
+
+# Cleanup previous rules
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+
+# If this server is going to be a gateway for other machinesthen ip_forward must be enabled, otherwise, disable it
+#echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Access Policies
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# Enable Loopbacks
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Enable established connections to run - very useful for SSH maintenance
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+
+################################################ SSH
+
+iptables -A INPUT -i $WAN1 -p tcp --dport 122 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport 122 -j ACCEPT
+
+
+
+################################################ Security / Protection Rules
+
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+iptables -A INPUT -i $WAN1 -p icmp --icmp-type echo-request -j DROP
+iptables -A FORWARD -i $WAN1 -p icmp --icmp-type echo-request -j DROP
+
+iptables -A INPUT -p tcp -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -p tcp -m limit --limit 1/s -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -i $WAN1 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+# This created a problem with something, but I don't remember what  :(
+#iptables -A INPUT -i $WAN1 -m unclean -j DROP
+#iptables -A FORWARD -i $WAN1 -m unclean -j DROP
+
+iptables -A INPUT -i $WAN1 -m state --state NEW,INVALID -j DROP
+iptables -A FORWARD -i $WAN1 -m state --state NEW,INVALID -j DROP
+
+
+
+
+
+################################################ ZIMBRA MAIL SERVER
+# Zimbra ports: 25 smtp, 80 httpd, 110 pop3, 143 imap, 465 smtps, 587 smtp, 993 imaps, 995 pop3s, 7071 zAdmin
+
+iptables -A INPUT -i $WAN1 -p tcp --dport   25 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport   25 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport   80 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport   80 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  110 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  110 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  143 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  143 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  443 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  443 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  465 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  465 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  587 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  587 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  993 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  993 -j ACCEPT
+
+iptables -A INPUT -i $WAN1 -p tcp --dport  995 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport  995 -j ACCEPT
+
+# If this port is going to remain open, one must check zimbra logs and run a IP based blocking (
+iptables -A INPUT -i $WAN1 -p tcp --dport 7071 -j ACCEPT
+iptables -A INPUT -i $WAN1 -p udp --dport 7071 -j ACCEPT
+
+
+################################################ Access control for second IP 
+# Ports WEB/apache2 (lamp): 80 httpd, 443 https
+# virtual eth0:1
+
+# TCP / UDP
+iptables -A INPUT -i $WAN2 -p tcp -d $IP2 --dport 80  -j ACCEPT
+iptables -A INPUT -i $WAN2 -p udp -d $IP2 --dport 80  -j ACCEPT
+
+iptables -A INPUT -i $WAN2 -p tcp -d $IP2 --dport 443 -j ACCEPT
+iptables -A INPUT -i $WAN2 -p udp -d $IP2 --dport 443 -j ACCEPT
+
+echo Firewall Rules Loaded!!!
+echo
+
+
