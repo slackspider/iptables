@@ -10,6 +10,9 @@
 ### Gateway Script with 2 External Links
 ### Manual switch necessary - Not load balancing
 
+# For old routers that use bridge mode
+#route add default ppp0
+
 WAN='eth0'            #adsl
 #WAN2='eth1'           #cable modem
 REDE='172.16.1.0/24'  #LAN
