@@ -1,0 +1,210 @@
+#!/bin/bash
+
+###
+### Iptables / network Script for load balancing with two different ISPs
+### Carlos Aranha, @slackspider
+### August, 4th 2014
+###
+
+WAN='eth0'            #cable
+WAN2='eth4'           #adsl
+REDE='172.16.1.0/24'
+LAN='eth3'
+
+GWWAN='192.168.0.1'      #cable modem 
+GWWAN2='192.168.1.1'     #adsl modem 
+IPVELOX='192.168.1.15'   #linux adsl
+IPVIRTUA='192.168.0.15'  #linux cable
+
+
+# Rule Cleanup
+iptables -F
+iptables -F -t nat
+iptables -F -t mangle
+iptables -X -t nat
+iptables -X -t mangle
+iptables -X
+ip rule flush
+ip route del default
+ip ru add prio 32765 lookup main
+ip ru add prio 32767 lookup default 
+ip route flush cache
+
+
+#IP Forwarding
+modprobe ip_tables
+modprobe iptable_nat
+modprobe ip_conntrack
+modprobe ip_conntrack_ftp
+modprobe ip_nat_ftp
+modprobe ipt_LOG
+modprobe ipt_REJECT
+modprobe ipt_MASQUERADE
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+
+# Mandatory to be disabled while routing with two links
+for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
+echo "0" > $i
+done
+
+
+# Clear all gateways before starting
+#route del default gw 192.168.1.1 > /dev/null
+#route del default gw 192.168.0.1 > /dev/null
+
+# Routing tables at /etc/iproute2/rt_tables 1 - cable e 2 - adsl
+ip route flush table virtua 
+ip route flush table velox  
+
+ip route add 192.168.1.0/24 dev eth4 src 192.168.1.15 table velox
+ip route add 192.168.0.0/24 dev eth0 src 192.168.0.15 table virtua
+
+ip route add default scope global nexthop via 192.168.0.1 dev eth0 weight 1 nexthop via 192.168.1.1 dev eth4 weight 1
+
+ip route add default via 192.168.1.1 table velox
+ip route add default via 192.168.0.1 table virtua
+
+ip rule add from 192.168.1.15 table velox
+ip rule add from 192.168.0.15 table virtua
+
+# The rule below is responsible for load balancing with a 2:1 weight, since adsl is 2x faster than cable
+#ip route add default scope global nexthop via 192.168.0.1 dev eth0 weight 1 nexthop via 192.168.1.1 dev eth4 weight 1
+route add default gw 192.168.1.1  # adsl
+route add default gw 192.168.0.1  # cable
+
+ip route flush cache #Clear cached routes
+
+
+
+#Access policy
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+#iptables -t nat -P PREROUTING ACCEPT
+
+# loopback enabled
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# LAN browsing
+#iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+#iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+#iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+#Inside the LAN, I can connect to all linux ports
+iptables -A INPUT -i $LAN -j ACCEPT
+
+# Security Rules ##############################################################################
+###############################################################################################
+
+#iptables -A INPUT -i $WAN -m state --state INVALID -j ULOG --ulog-prefix "INVALID"
+iptables -A INPUT -i $WAN -m state --state INVALID -j DROP
+
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+# Disable external pings
+iptables -A INPUT -i $WAN -p icmp --icmp-type echo-request -j DROP
+iptables -A INPUT -i $WAN2 -p icmp --icmp-type echo-request -j DROP
+
+# No port scanners, please
+iptables -A INPUT -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ULOG --ulog-prefix "PORT SCAN"
+iptables -A INPUT -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+iptables -A FORWARD -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ULOG --ulog-prefix "PORT SCAN FORWARD"
+iptables -A FORWARD -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+# No IP Spoofing
+iptables -A INPUT -s 172.16.1.0 -i $WAN -j ULOG --ulog-prefix "INPUT 172.16.0.0"
+iptables -A INPUT -s 192.168.2.0/24 -i $WAN -j DROP
+iptables -A FORWARD -s 172.16.1.0 -i $WAN -j ULOG --ulog-prefix "FORWARD 172.16.0.0"
+
+
+
+######################################################################################################
+###### INTERNET Browsing Rules
+######################################################################################################
+
+
+
+###### Access Rules
+
+#Web
+#iptables -A INPUT -i $WAN -p tcp --dport 80 -j ACCEPT
+#iptables -A INPUT -i $WAN -p udp --dport 80 -j ACCEPT
+
+#SSH
+iptables -A INPUT -i $WAN -p tcp --dport 122 -j ACCEPT
+iptables -A INPUT -i $WAN -p udp --dport 122 -j ACCEPT
+
+# Webmin
+#iptables -A INPUT -p tcp --dport 2084 -j ACCEPT
+#iptables -A INPUT -p udp --dport 2084 -j ACCEPT
+
+# VPN
+#iptables -A INPUT -p tcp --dport 1723 -j ACCEPT
+#iptables -A INPUT -p udp --dport 1723 -j ACCEPT
+
+# SQUID
+# Redirect Squid to port 80 
+
+iptables -t nat -A POSTROUTING -s $REDE -o $LAN2  -j MASQUERADE
+iptables -t nat -A PREROUTING -i $LAN -p tcp -s $REDE --dport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -i $LAN -p udp -s $REDE --dport 80 -j REDIRECT --to-port 3128
+
+# VPN - Attention to GRE 47 protocol
+iptables -t nat -A PREROUTING -i $WAN -p tcp --dport 1723 -j DNAT --to-destination 192.168.0.1
+iptables -t nat -A PREROUTING -i $WAN -p 47 -j DNAT --to-destination 192.168.0.1
+iptables -A FORWARD -p 47 -j ACCEPT
+iptables -A INPUT -p 47 -j ACCEPT
+
+
+# Must have a rule for each port I want to allow access
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN2 -p tcp --dport 443 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN2 -p udp --dport 443 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 465 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 465 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 122 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 122 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 22  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 110 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 110 -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 25  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 25  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 53  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 53  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 23  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 23  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 143  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 143  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 995  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 995  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 993  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 993  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 585  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 585  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 587  -j MASQUERADE
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 587  -j MASQUERADE
+
+
+# VPN
+#iptables -I INPUT -p udp --dport 1194 -j ACCEPT
+#iptables -I OUTPUT -p udp --dport 1194 -j ACCEPT
+
+############################################
+## Redirecionamento de Portas
+
+# Model for allowing a connection from WAN to a LAN machine
+#iptables -t nat -A PREROUTING -p tcp --dport 122  -j DNAT --to-destination 172.16.1.90:122
+#iptables -t nat -A PREROUTING -p udp --dport 122  -j DNAT --to-destination 172.16.1.90:122
+
+
+# When using SQUID, no masquerade is needed
+# If you allow this rule, it will ignore SQUID and users will navigate freely 
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -j MASQUERADE    # cable
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN2 -j MASQUERADE   # adsl
+
+echo Firewall Script loaded . . .
+
+
+
