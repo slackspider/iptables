@@ -1,0 +1,182 @@
+#!/bin/bash
+
+###
+### IpTables Firewall Script
+### ADSL / Cable Gateway 
+### Carlos Aranha, @slackspider
+### 2014, August, 4th
+###
+
+### Gateway Script with 2 External Links
+### Manual switch necessary - Not load balancing
+
+WAN='eth0'            #adsl
+#WAN2='eth1'           #cable modem
+REDE='172.16.1.0/24'  #LAN
+LAN='eth2'            #NIC (Network Interface card)
+
+#GWWAN='192.168.0.1'      #cable modem LAN IP
+GWWAN2='192.168.1.1'     #adsl modem LAN IP
+IPVELOX='192.168.1.15'   #linux adsl nic
+#IPVIRTUA='192.168.0.15'  #linux cable ip
+
+
+# Cleanup Other Rules
+iptables -F
+iptables -F -t nat
+iptables -X -t nat
+iptables -X
+
+
+# IP Forwarding
+modprobe ip_tables
+modprobe iptable_nat
+modprobe ip_conntrack
+modprobe ip_conntrack_ftp
+modprobe ip_nat_ftp
+modprobe ipt_LOG
+modprobe ipt_REJECT
+modprobe ipt_MASQUERADE
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+
+# Here you can choose manually choose which Gateway you want to use
+route del default
+route add default gw $GWWAN2
+
+
+# Access Policy
+iptables -P INPUT DROP
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+
+# Loopback must be enabled
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow LAN connections to this gateway
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+#Pela LAN, conecto em qualquer porta do Linux
+iptables -A INPUT -i $LAN -j ACCEPT
+
+# Security  ###################################################################################
+###############################################################################################
+
+#iptables -A INPUT -i $WAN -m state --state INVALID -j ULOG --ulog-prefix "INVALID"
+iptables -A INPUT -i $WAN -m state --state INVALID -j DROP
+
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+# Block external pings
+#iptables -A INPUT -i $WAN -p icmp --icmp-type echo-request -j DROP
+#iptables -A INPUT -i $WAN2 -p icmp --icmp-type echo-request -j DROP
+
+# No Port Scanners, please
+iptables -A INPUT -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ULOG --ulog-prefix "PORT SCAN"
+iptables -A INPUT -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+iptables -A FORWARD -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ULOG --ulog-prefix "PORT SCAN FORWARD"
+iptables -A FORWARD -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+# No IP Spoofing please
+iptables -A INPUT -s 172.16.1.0 -i $WAN -j ULOG --ulog-prefix "INPUT 172.16.0.0"
+iptables -A INPUT -s 192.168.2.0/24 -i $WAN -j DROP
+iptables -A FORWARD -s 172.16.1.0 -i $WAN -j ULOG --ulog-prefix "FORWARD 172.16.0.0"
+
+
+
+
+######################################################################################################
+###### Internet Rules
+######################################################################################################
+
+
+###### Allowing ports on LOCAL SERVER
+
+#Web
+#iptables -A INPUT -i $WAN -p tcp --dport 80 -j ACCEPT
+#iptables -A INPUT -i $WAN -p udp --dport 80 -j ACCEPT
+
+#SSH
+iptables -A INPUT -i $WAN  -p tcp --dport 122 -j ACCEPT
+iptables -A INPUT -i $WAN  -p udp --dport 122 -j ACCEPT
+
+# Webmin
+iptables -A INPUT -p tcp --dport 2084 -j ACCEPT
+iptables -A INPUT -p udp --dport 2084 -j ACCEPT
+
+# VPN
+iptables -A INPUT -p tcp --dport 1723 -j ACCEPT
+iptables -A INPUT -p udp --dport 1723 -j ACCEPT
+
+# SQUID
+# Redirecting enabled to Proxy only on port 80 
+iptables -t nat -A POSTROUTING -s 172.16.1.63 -o $WAN  -j MASQUERADE
+iptables -t nat -A PREROUTING -i $LAN -p tcp -s $REDE --dport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -i $LAN -p udp -s $REDE --dport 80 -j REDIRECT --to-port 3128
+
+# VPN - Attention to GRE 47 protocol
+#iptables -t nat -A PREROUTING -i $WAN -p tcp --dport 1723 -j DNAT --to-destination 192.168.0.1
+#iptables -t nat -A PREROUTING -i $WAN -p 47 -j DNAT --to-destination 192.168.0.1
+#iptables -A FORWARD -p 47 -j ACCEPT
+#iptables -A INPUT -p 47 -j ACCEPT
+
+
+# Must allow two rules per port
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 443 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 443 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 465 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 465 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 122 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 122 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 22  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 110 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 110 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 25  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 25  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 53  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 53  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 23  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 23  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 21  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 21  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 22  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 22  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 143  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 143  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 995  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 995  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 993  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 993  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 585  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 585  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 587  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 587  -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 3306 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 3306 -j MASQUERADE
+
+#zimbraAdmin
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p tcp --dport 7071 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $REDE -o $WAN -p udp --dport 7071 -j MASQUERADE
+
+# VPN Linux
+#iptables -I INPUT -p udp --dport 1194 -j ACCEPT
+#iptables -I OUTPUT -p udp --dport 1194 -j ACCEPT
+
+############################################
+## Redirecionamento de Portas
+
+# No masquerade allowed because of SQUID
+# if you enable it, it will ignore squid
+#iptables -t nat -A POSTROUTING -s $REDE -o $WAN  -j MASQUERADE    # velox
+##iptables -t nat -A POSTROUTING -s $REDE -o $WAN2 -j MASQUERADE    # virtua
+
+echo Script de firewall carregado . . .
+echo
+
+#Fim do arquivo
+
+
