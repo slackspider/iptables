@@ -1,0 +1,163 @@
+#!/bin/bash
+
+###
+### Cloud Servers
+### Carlos Aranha, @slackspider
+### aranha@gnnet.com.br
+### 2022
+###
+
+IP_MAIL="1.2.3.4"
+IP_WWW="1.2.3.5"
+
+# Loading blocked IPs
+BADIPS="bad_ips.txt"
+BADNETS="bad_nets.txt"
+CLOUDFLARE="ips_cloudflare.txt"
+
+
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+
+#
+#
+# Statistics
+# iptables -L -nv
+#
+
+#echo 1 > /proc/sys/net/ipv4/ip_forward
+
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+
+################################################ SSH
+
+iptables -A INPUT -i eth0 -p tcp --dport 1220 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 1220 -j ACCEPT
+
+################################################ Security
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+iptables -A INPUT -i eth0 -p icmp --icmp-type echo-request -j DROP
+iptables -A FORWARD -i eth0 -p icmp --icmp-type echo-request -j DROP
+
+#iptables -A INPUT -p tcp -m limit --limit 1/s -j ACCEPT
+#iptables -A FORWARD -p tcp -m limit --limit 1/s -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -i eth0 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+iptables -A INPUT -i eth0 -m state --state INVALID -j DROP
+iptables -A FORWARD -i eth0 -m state --state INVALID -j DROP
+
+
+
+
+######### BLOCKED IPS
+
+
+# Block all IPs from $BADIPS and $BADNETS lists
+
+if [ -f $BADIPS ]; then
+  for ip in `cat $BADIPS`;
+    do
+      iptables -A INPUT -s $ip -j LOG --log-prefix "Autodrop $ip "
+      iptables -A INPUT -s $ip -j DROP
+    done
+fi
+
+if [ -f $BADNETS ]; then
+  for net in `cat $BADNETS`;
+    do
+      iptables -A INPUT -s $net -j LOG --log-prefix "Autodrop Net $net "
+      iptables -A INPUT -s $net -j DROP
+    done
+fi
+
+
+#IPGLOBE SPAMMER BR
+
+iptables -A INPUT -s 186.251.130.0/24 -j LOG --log-prefix "SPAM IPGLOBE BR 186.251.130.0/24 "
+iptables -A INPUT -s 186.251.130.0/24 -j DROP
+iptables -A INPUT -s 186.251.131.0/24 -j LOG --log-prefix "SPAM IPGLOBE BR 186.251.131.0/24 "
+iptables -A INPUT -s 186.251.131.0/24 -j DROP
+iptables -A INPUT -s 186.251.133.0/24 -j LOG --log-prefix "SPAM IPGLOBE BR 186.251.133.0/24 "
+iptables -A INPUT -s 186.251.133.0/24 -j DROP
+iptables -A INPUT -s 186.251.141.0/24 -j LOG --log-prefix "SPAM IPGLOBE BR 186.251.141.0/24 "
+iptables -A INPUT -s 186.251.141.0/24 -j DROP
+
+sh /root/GN-Scripts/gncloud/rc.firewall_russia
+
+
+################## ZIMBRA MAIL SERVER
+# Portas do Zimbra: 25 smtp, 80 httpd, 110 pop3, 143 imap, 465 smtps, 587 smtp, 993 imaps, 995 pop3s, 7071 zAdmin
+
+iptables -A INPUT -i eth0 -p tcp --dport   25 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport   25 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport   80 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport   80 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  110 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  110 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  143 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  143 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  443 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  443 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  465 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  465 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  587 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  587 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  993 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  993 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport  995 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport  995 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport 7071 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 7071 -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --dport 8448 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 8448 -j ACCEPT
+
+
+################## WWW
+# Portas WEB/apache2 (lamp): 80 httpd, 443 https
+
+iptables -A INPUT -i eth0:1 -p tcp -d $IP_WWW --dport 80  -j ACCEPT
+iptables -A INPUT -i eth0:1 -p udp -d $IP_WWW --dport 80  -j ACCEPT
+
+iptables -A INPUT -i eth0:1 -p tcp -d $IP_WWW --dport 443 -j ACCEPT
+iptables -A INPUT -i eth0:1 -p udp -d $IP_WWW --dport 443 -j ACCEPT
+
+
+
+# Allows cloudflare
+if [ -f $CLOUDFLARE ]; then
+  for ip in `cat $CLOUDFLARE`;
+    do
+      iptables -I INPUT -p tcp -m multiport --dports http,https -s $ip -j ACCEPT 
+      iptables -A INPUT -s $ip -j LOG --log-prefix "Cloudflare $ip "
+    done
+fi
+
+
+echo Firewall Rules Loaded!!!
+echo
+
+
