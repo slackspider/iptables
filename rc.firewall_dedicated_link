@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# Limpeza de Regras
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+
+# Loading modules
+modprobe ip_tables
+modprobe iptable_nat
+modprobe ip_conntrack
+modprobe ipt_state 
+modprobe ipt_limit
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Access Policies
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# Loopbacks
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allows browsing
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Aquarium and Mercury servers
+iptables -A FORWARD -i eth1 -s 172.16.0.1 -j ACCEPT
+#iptables -A FORWARD -i eth1 -s 172.16.0.8 -j ACCEPT
+
+iptables -A INPUT -s 172.16.0.1 -i eth1 -p icmp -j ACCEPT
+
+################################################ Access control
+
+iptables -A INPUT -i eth0 -p tcp --dport 22 -m mac --mac 00:02:a5:c1:75:0c -j ACCEPT
+iptables -A INPUT -i eth0 -p tcp --dport 22 -j DROP
+
+################################################ Security Rules
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+iptables -A INPUT -i eth0 -p icmp --icmp-type echo-request -j DROP
+iptables -A FORWARD -i eth0 -p icmp --icmp-type echo-request -j DROP
+
+iptables -A INPUT -p tcp -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -p tcp -m limit --limit 1/s -j ACCEPT
+
+iptables -A INPUT -i eth0 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -i eth0 -p tcp --tcp-flags SYN,ACK,FIN RST -m limit --limit 1/s -j ACCEPT
+
+iptables -A INPUT -i eth0 -m unclean -j DROP
+iptables -A FORWARD -i eth0 -m unclean -j DROP
+
+iptables -A INPUT -i eth0 -m state --state NEW,INVALID -j DROP
+iptables -A FORWARD -i eth0 -m state --state NEW,INVALID -j DROP
+
+iptables -A INPUT -i eth0 -s 172.16.0.0 -j DROP
+iptables -A FORWARD -i eth0 -s 172.16.0.0 -j DROP
+
+
+
+#Aquarium
+iptables -A FORWARD -p tcp --dport 80 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p udp --dport 80 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 110 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p udp --dport 110 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 25 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p udp --dport 25 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p udp --dport 53 -d 172.16.0.1 -j ACCEPT
+
+iptables -A FORWARD -p udp --dport 5800 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 5800 -d 172.16.0.1 -j ACCEPT
+
+iptables -A FORWARD -p udp --dport 5900 -d 172.16.0.1 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 5900 -d 172.16.0.1 -j ACCEPT
+
+######### NAT 1:1  ########
+#Mercury Mail Server
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.99 --dport 80 -j DNAT --to-destination 172.16.0.1:80
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.99 --dport 25 -j DNAT --to-destination 172.16.0.1:25
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.99 --dport 110 -j DNAT --to-destination 172.16.0.1:110
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.99 --dport 5800 -j DNAT --to-destination 172.16.0.1:5800
+iptables -t nat -A PREROUTING -p udp -d 200.97.128.99 --dport 5800 -j DNAT --to-destination 172.16.0.1:5800
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.99 --dport 5900 -j DNAT --to-destination 172.16.0.1:5900
+iptables -t nat -A PREROUTING -p udp -d 200.97.128.99 --dport 5900 -j DNAT --to-destination 172.16.0.1:5900
+
+
+#Mercury (WWW and Mail Server) #2
+iptables -t nat -A PREROUTING -p tcp -d 200.97.128.101 --dport 80 -j DNAT --to-destination 172.16.0.1:80
+iptables -t nat -A PREROUTING -p udp -d 200.97.128.101 --dport 25 -j DNAT --to-destination 172.16.0.1:25
+iptables -t nat -A PREROUTING -p udp -d 200.97.128.101 --dport 110 -j DNAT --to-destination 172.16.0.1:110
+
+iptables -t nat -A POSTROUTING -s 172.16.0.1 -j SNAT --to-source 200.97.128.99
+######### Fim das Regras de NAT #################
+
+echo Firewall Rules Loaded!!!
+echo
