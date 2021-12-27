@@ -102,7 +102,7 @@ iptables -A INPUT -i $WAN1 -p udp --dport  993 -j ACCEPT
 iptables -A INPUT -i $WAN1 -p tcp --dport  995 -j ACCEPT
 iptables -A INPUT -i $WAN1 -p udp --dport  995 -j ACCEPT
 
-# If this port is going to remain open, one must check zimbra logs and run a IP based blocking (
+# If this port is going to remain open, one must check zimbra logs and run a IP based blocking (fail2ban)
 iptables -A INPUT -i $WAN1 -p tcp --dport 7071 -j ACCEPT
 iptables -A INPUT -i $WAN1 -p udp --dport 7071 -j ACCEPT
 
